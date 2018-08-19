@@ -1,24 +1,37 @@
 #!/usr/bin/env python3
 from telethon import TelegramClient, events
+from telethon import utils
 from multiprocessing import Process, Queue
 from googletrans import Translator
 from datetime import datetime
+from geolite2 import geolite2
 from random import choice
+import urllib.request
+import youtube_dl
 import asyncio
+import socket
 import pyowm
+import time
 import copy
 import re
+import os
 
 # right way to use this script:
 #
-# $ nohup python3 bot.py
+# $ nohup python3 -u bot.py &
 #
 # 'nohup' option will make your script to work in the background even if you end console process
 # all data printed in stdout will be saved in a file called 'nohup.out', so basically it will store logs of all your chats
+# -u: unbuffering, so script will save messages in real-time mode
+# to see the log type:
+#
+# $ tail -f nohup.out
 
-# message width in full window is 55 characters
+# message width is 55 characters
 # |   1 0   |   2 0   |   3 0   |   4 0   |   50   |12345|
 # 1234567891123456789112345678911234567891123456789112345|
+
+# pyowm checks weather with API key provided below
 
 CLEARASCII = [r"     \   /     ",
               r"      .-.      ",
@@ -36,11 +49,10 @@ OTHERASCII = [r"      .-.      ",
               r"   ‚‘‚‘‚‘‚‘    ",
               r"   ‚’‚’‚’‚’    "]
 
-FLAGLIST = { # used to get right emoji for answer
-    "ru": "🇷🇺", "ja": "🇯🇵", "en": "🇬🇧", "uk": "🇩🇪", "pl": "🇩🇪", "de": "🇩🇪", "fr": "🇫🇷", "no": "🇳🇴"}
+FLAGLIST = {
+    "ru": "🇷🇺", "ja": "🇯🇵", "en": "🇬🇧", "uk": "🇩🇪", "pl": "🇩🇪", "de": "🇩🇪", "fr": "🇫🇷", "no": "🇳🇴"}  # get right emoji
 
 def getweather(city : str, owm : pyowm) -> str:
-# pyowm checks weather with API key provided below
     if city:
         getweather = owm.weather_at_place(city)
         w = getweather.get_weather()
@@ -82,6 +94,12 @@ def translates(item : str, language : str) -> Translator:
     else:
         return -1
 
+def curl(url) -> str:
+    response = urllib.request.urlopen(url)
+    response = str(response.info()).splitlines()
+    response = [i for i in response if "set-cookie:" not in i.lower()]
+    return(response)
+
 # https://openweathermap.org/appid
 # you get your OpenWeather API key here
 owm = pyowm.OWM('you put your OW API key here', language='en')
@@ -94,13 +112,12 @@ api_hash = 'your API hash'
 client = TelegramClient('log', api_id, api_hash)
 client.start()
 
-# @iotop is my tg nickname, obviously you should change it to yours
-# you should use it to avoid conflicts with other bots that can react to such phrases and sentences
-interact = ("/ping@iotop", "/weather@iotop", "some chat phrase", "/help@iotop", "/eval", ["Ping-pong.", "Cat pictures are not funny.", "No",
-                                                                                          "Had no time to think of the other answers"])
-
-dummy_interact = copy.deepcopy(interact[5])
-blacklist = ['12345678'] #id blacklist to ignore requests from undesirable users
+# other
+interact = ("/ping@moe", "/weather@moe", "/help@moe", "/getip@moe", "/geoip@moe", "/youtube@moe", "/curl@moe",
+                                                                                        ["Ping-pong.", "Cat pictures are not funny.", "No",
+                                                                                        "Had no time to think of the other answers"])
+dummy_interact = copy.deepcopy(interact[7])
+blacklist = ['12345678'] #blacklist to ignore requests from undesirable users
 
 @client.on(events.NewMessage)
 async def my_event_handler(event):
@@ -110,8 +127,10 @@ async def my_event_handler(event):
             event = None
     if event != None:
         global dummy_interact, interact
-        print("{} [MID: {} FROMID: {}]: {}".format(datetime.now(),
-                                event.message.id, event.message.from_id, event.raw_text))
+        fromid = event.message.from_id
+        entity = await client.get_entity(fromid)
+        print("{} [MID: {} FROMID: {} {}]: {}".format(datetime.now(),
+                                event.message.id, fromid, utils.get_display_name(entity), event.raw_text))
         for language in FLAGLIST:
             if "/tr{}".format(language) in event.raw_text.lower():
                 checktr = event.raw_text.lower()
@@ -144,35 +163,127 @@ async def my_event_handler(event):
                 await event.reply(toprint)
                 del dummy_interact[number_choice]
             else:
-                dummy_interact = copy.deepcopy(interact[5])
+                dummy_interact = copy.deepcopy(interact[7])
                 toprint = dummy_interact[number_choice]
                 await event.reply(toprint)
                 del dummy_interact[number_choice]
         if interact[1] in event.raw_text:
             city = event.raw_text[int(event.raw_text.rfind(
-                "/weather@iotop") + len(interact[1])):]
+                interact[1]) + len(interact[1])):]
             city = city.strip()
-            print("asking for weather...", city)  # console log for convenience
             result = getweather(city, owm)
             await event.reply(result)
-
-	#some chat phrase bot will answer to:
         if interact[2] in event.raw_text.lower():
-            await event.reply(file="/home/aurora/bot/some_picture1.webp")
-
-        if interact[3] in event.raw_text.lower():
             await event.reply(
-                "Usage:\n/tren/trru/truk/trja [word]\n/ping@iotop\n/weather@iotop [City]\n/eval [expression]")
+                "Usage:\n\nFUNCTIONS:\n1. Translator: send '/tren' to get translator help\n2. Weather:\n`  \
+/weather@moe [City]`\n3. Curl -I:\n`  /curl@moe http://website/`\n4. Calculator:\n`  /eval [expression]`\n5. \
+IP lookup by domain:\n`  /getip@moe http://website/`\n6. GEOIP:\n`  /geoip@moe 0.1.2.3`\n7. YOUTUBE-DL\n`  \
+/youtube@moe http://link.to/thevideo`\n`  /youtube@moe --q=360 http://link.to/thevideo`\n`  Will download video in 360p`\n`  \
+Available quality: 360/480/720`\n\nSTUFF:\n`  /ping@moe`")
+        if interact[3] in event.raw_text.lower():
+            result = event.raw_text.lower()
+            result = result.replace(interact[3], "").strip()
+            if "http://" in result:
+                result = result.replace("http://", "")
+            if "https://" in result:
+                result = result.replace("https://", "")
+            findlink = result.find("/")
+            if findlink != -1:
+                result = result[:findlink]
+            try:
+                print(result)
+                result = socket.gethostbyname(result)
+                await event.reply("`{}`".format(result))
+            except:
+                await event.reply("An error occured:", sys.exc_info()[0])
+                pass
+        if interact[4] in event.raw_text.lower():
+            result = event.raw_text.lower()
+            reader = geolite2.reader()
+            result = result.replace(interact[4], "").strip()
+            result = reader.get(result)
+            if result.get("subdivisions"):
+                await event.reply(
+                "```GEO ID: {}\nCOUNTRY: {}\nLATITUDE: {}\nLONGITUDE: {}\nTIME ZONE: {}\nISO CODE: {}\nSUBDIVISION GEO ID: {}\nSUBDIVISION: {}```".format(
+                    result["country"]["geoname_id"], result["country"]["names"]["en"], result["location"]["latitude"],
+                    result["location"]["longitude"], result["location"]["time_zone"], result["subdivisions"][0]["iso_code"],
+                    result["subdivisions"][0]["geoname_id"], result["subdivisions"][0]["names"]["en"]))
+            if not result.get("subdivisions"):
+                await event.reply(
+                    "```GEO ID: {}\nCOUNTRY: {}\nLATITUDE: {}\nLONGITUDE: {}```".format(
+                    result["country"]["geoname_id"], result["country"]["names"]["en"], result["location"]["latitude"],
+                    result["location"]["longitude"]))
+        if interact[5] in event.raw_text.lower():
+            result = event.raw_text
+            result = result.replace(interact[5], "").strip()
+            setname = choice(range(0, 999999))
+            filepath = "/home/aurora/bot/{}.mp4".format(setname)
+            if "vk.com/" in result:
+                await event.reply("Downloading video from VK requires authorization. This is not the problem of youtube-dl itself.")
+            else:
+                if "youtube" and "&list=" in result:
+                    findlink = result.find("&list=")
+                    result = result[:findlink]
+                try:
+                    if "--q=360" in result:
+                        ydl_opts = {
+                            'outtmpl': filepath,
+                            'format': 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/[height <=? 360]/bestvideo+bestaudio'
+                        }
+                        result = result.replace("--q=360", "").strip()
+                    elif "--q=480" in result:
+                        ydl_opts = {
+                            'outtmpl': filepath,
+                            'format': 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/[height <=? 480]/bestvideo+bestaudio'
+                        }
+                        result = result.replace("--q=480", "").strip()
+                    elif "--q=720" in result:
+                        ydl_opts = {
+                            'outtmpl': filepath,
+                            'format': 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/[height <=? 720]/bestvideo+bestaudio'
+                        }
+                        result = result.replace("--q=720", "").strip()
+                    else:
+                        ydl_opts = {
+                            'outtmpl': filepath,
+                            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio'
+                        }
+                    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([result])
+                    while not os.path.isfile(filepath):
+                        sleep(1)
+                    # moves file to the server directory and send a link to the plain video with ability to download it
+                    os.rename(filepath, "/srv/www/public_html/temp/temp/{}.mp4".format(setname))
+                    link = "https://temp.neko.space/temp/{}.mp4".format(setname)
+                    await event.reply(link)
+                except:
+                    if result != "":
+                        await event.reply("An error has occured. Probably, your video is not available.")
+        if interact[6] in event.raw_text.lower():
+            link = event.raw_text.lower()
+            try:
+                link = link.replace(interact[6], "")
+                if not ("http://" or "https://") in link:
+                    link = "http://{}".format(link.strip())
+                getcurl = curl(link.strip())
+
+                await event.reply(
+                "```{}```".format(getcurl))
+
+            except urllib.error.HTTPError as e:
+                await event.reply('''An error occurred: {}.\nThe response code was {}'''.format(
+                    e, e.getcode()))
+            time.sleep(3)
         if "/shrug" in event.raw_text.lower():
             await event.edit(event.raw_text.replace("/shrug", r"¯\_(ツ)_/¯"))
-        if interact[4] in event.raw_text:
+
+        if "/eval" in event.raw_text:
             if "print" in event.raw_text.lower():
                 findres = event.raw_text.find("print(")
                 rfindres = event.raw_text.find(")", findres)
                 if findres != -1 and rfindres != -1:
                     result = event.raw_text[(findres + 6):rfindres]
                     result = result.replace('"', '')
-                    print("Printed:", result)
                     await event.reply(result)
             elif "len" in event.raw_text.lower():
                 findres = event.raw_text.find("len(")
@@ -181,7 +292,6 @@ async def my_event_handler(event):
                     result = event.raw_text[(findres + 4):rfindres]
                     result = result.replace('"', '')
                     result = str(len(result))
-                    print("Len:", result)
                     await event.reply(result)
             else:
             #we will check if eval isn't too long and then start a new process
