@@ -1,3 +1,6 @@
 pyowm==2.8.0
+maxminddb_geolite2==2018.703
+youtube_dl==2018.8.4
 Telethon==1.0.3
 googletrans==2.3.0
+
